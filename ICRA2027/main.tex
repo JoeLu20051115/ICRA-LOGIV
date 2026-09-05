@@ -1,0 +1,329 @@
+\documentclass[letterpaper,10pt,conference]{ieeeconf}
+
+\IEEEoverridecommandlockouts
+\overrideIEEEmargins
+
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb}
+\usepackage{cite}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{xspace}
+\usepackage{placeins}
+\usepackage{balance}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+
+\newcommand{\method}{LOGIV\xspace}
+\newcommand{\T}{\textsc{true}}
+\newcommand{\F}{\textsc{false}}
+\newcommand{\U}{\textsc{unresolved}}
+\definecolor{algcommentblue}{RGB}{0,125,155}
+\newcounter{algorithm}
+\newcounter{algline}
+\newenvironment{algorithm}[1][t]{%
+  \begin{figure}[#1]\refstepcounter{algorithm}\footnotesize
+}{\end{figure}}
+\newcommand{\algcaption}[1]{%
+  \noindent\textbf{Algorithm~\thealgorithm\quad #1}\par\vspace{3pt}\hrule\vspace{4pt}}
+\newenvironment{compactalgorithmic}{%
+  \begin{list}{\arabic{algline}}{%
+    \usecounter{algline}
+    \setlength{\leftmargin}{1.55em}
+    \setlength{\labelwidth}{1.05em}
+    \setlength{\labelsep}{0.45em}
+    \setlength{\itemsep}{0.8pt}
+    \setlength{\parsep}{0pt}
+    \setlength{\topsep}{3pt}
+    \setlength{\partopsep}{0pt}}
+}{\end{list}}
+\newcommand{\algcomment}[1]{{\color{algcommentblue}// #1}}
+
+\title{LOGIV: Graph-Verified Execution with Causal Local Repair for Long-Horizon Robot Tasks}
+\author{Anonymous Authors}
+
+\begin{document}
+\maketitle
+\thispagestyle{empty}
+\pagestyle{empty}
+
+\begin{abstract}
+Long-horizon robot tasks contain interdependent actions, so perception errors, execution failures, or environmental changes that invalidate an early condition can propagate through later dependencies. Vision-Language-Action (VLA) and World Action Model (WAM) systems do not represent these dependencies explicitly. After a failure, they often replan all remaining actions or insert recovery actions, making it difficult to isolate the affected branch and preserve valid plan structure. We propose \method (\underline{L}ong-horizon
+\underline{O}nline \underline{G}raph-based \underline{I}nference and
+\underline{V}erification for Causal Plan Repair), a training-free, graph-based, plug-in closed-loop framework. For each task type, \method generates a high-level action plan and compiles its actions and dependencies into a task graph before execution. During execution, state facts and node- and graph-level support checks maintain a reliable state. On failure, \method follows Causal edges to isolate the affected branch, replans only that part, validates and updates the graph, and resumes execution. On ten dual-arm tasks from each of RoboTwin~V2 and BiCoord, it raises the mean Clean SR of the $\pi_{0.5}$, AHA-WAM, and Light-WAM backbones from 71.67\% to 82.33\% and from 42.33\% to 57.67\%, respectively. Under manual disturbances, it also beats three matched corrective baselines on all backbones, restores invalidated conditions more effectively, and completes more tasks. To our knowledge, \method is the first framework to use a graph as the execution schedule. This design provides reliable long-horizon execution across low-level policies.
+\end{abstract}
+
+\section{Introduction}
+Perception errors, execution deviations, and environmental changes accumulate over long-horizon embodied tasks and can cause failure. Hierarchical methods address this complexity by decomposing tasks into high-level subgoals or skills that a low-level visual policy executes. Here the low-level policies are Vision-Language-Action (VLA) models, which map multimodal observations directly to continuous actions~\cite{team2024octo,kim2024openvla,black2024backslash}, and World Action Models (WAMs), which model future observation and action evolution~\cite{yuan2026fast,cai2026aha}. Yet detecting a failed action is insufficient. An early condition may be discovered invalid several steps later, so the system must separate affected downstream steps from still-valid completed results.
+
+\begin{figure}[!t]
+  \centering
+    \includegraphics[width=0.95\columnwidth,trim=240 0 240 0,clip]{Intro beautiful.pdf}
+  \caption{\method execution on \texttt{blocks\_ranking\_size}. (A) The initial task graph is generated and validated before execution. (B) The medium-block branch fails during execution. (C) Only the affected branch is repaired, while the remainder of the plan is preserved.}
+  \label{fig:teaser}
+\end{figure}
+
+High-level planners follow two broad approaches. Language or vision-language models support skill selection, reasoning from environmental feedback, spatial grounding, and agentic policy orchestration~\cite{ahn2024autort,ouyang2025long,huang2024rekep,feng2025reflective,chen2025robohorizon,ji2026hime,peng2026cortex,zhang2026harness,huang2026roboharness}. Although they improve decomposition and adaptation to feedback under open semantics, their subgoals, text context, or short-horizon predictions still require extra checks to establish that the complete plan is executable~\cite{yang2025guiding,chen2025code}. Alternatively, executable programs or symbolic formulations use classical planners, PDDL, or task-and-motion planning to generate constrained sequences~\cite{sakib2024consolidating,chen2024roboscript,yang2025guiding,kwon2025fast,chen2025code,chu2025llm+}. They check preconditions and both discrete and continuous constraints explicitly, but generally require a supplied symbolic state. Neither approach continuously records which action established each condition and which later actions depend on it. Recovery instead follows the current failure, linear plan position, or latest observation. A changed visual fact or disturbed early effect can therefore surface later and affect temporally nonadjacent actions. The temporal failure location is not the causal repair boundary.
+
+Figure~\ref{fig:teaser} illustrates \method, a closed-loop framework above an existing low-level policy, on \texttt{blocks\_ranking\_size}. Its two stages are pre-execution planning and closed-loop execution. Each task type starts with one graph, whose updates depend on runtime disturbances. From the initial state and goal, \method generates and logically validates a high-level action plan, then compiles subtask nodes and dependency edges. The \method graph scheduler selects the next ready node, and the backbone executes the selected high-level action while \method continually checks its completion from current visual observations. A confirmed failure triggers replanning only of the affected branch; other valid actions remain, and the validated plan and graph re-enter the loop.
+
+We evaluate \method on 20 simulated dual-arm tasks from RoboTwin~V2 and BiCoord with $\pi_{0.5}$, AHA-WAM, and Light-WAM, and we also conduct a real-robot evaluation. It raises undisturbed mean Clean SR from 71.67\% to 82.33\% on RoboTwin~V2 and from 42.33\% to 57.67\% on BiCoord. It also beats three matched corrective baselines under manual disturbances. Our contributions are:
+\begin{itemize}
+  \setlength{\itemsep}{0pt}
+  \setlength{\topsep}{2pt}
+  \item We identify that the detected failure location in long-horizon execution differs from the causal boundary that must be replanned, and formulate online recovery as continual verification and invalidation localization over inter-action condition supports.
+  \item We introduce the causal-support-aware \method framework: Causal edges trace affected branches, Resource edges constrain execution order, and topology-guided local repair replaces only invalidated parts before validating the subsequent plan.
+  \item Our evaluation spans 20 dual-arm tasks across RoboTwin~V2 and BiCoord, three VLA/WAM backbones, and a real-robot study.
+\end{itemize}
+
+\section{Related Work}
+\subsection{High-Level Planning over VLA and WAM}
+Long-horizon methods commonly put a high-level module above a VLA or WAM: the low-level policy performs short actions such as grasps and placements, while the high level selects the next step from the image, task progress, and history. HiMe preserves context with hierarchical memory; Cortex unifies the VLM-planner/VLA-executor subtask interface; and Harness VLA and RoboHarness use execution memory to select and connect policies~\cite{ji2026hime,peng2026cortex,zhang2026harness,huang2026roboharness}. For WAMs, RoboHorizon supports multi-stage planning with predicted scene changes, while Fast-WAM and AHA-WAM use such information efficiently for action generation~\cite{chen2025robohorizon,yuan2026fast,cai2026aha}. These methods connect long-horizon decisions to execution, but after a partially executed plan is disturbed they must still determine which later steps depend on an invalid completed result, which to replace, and which to retain.
+
+\subsection{Plan Verification and Recovery}
+Recent failure-recovery methods combine visual feedback, online checks, and structured execution instead of relying only on predefined rules or human intervention~\cite{ahmad2025unified}. VeriGraph uses object relations in a scene graph to check and correct candidate sequences~\cite{ekpo2024verigraph}; neuro-symbolic recovery locates errors in an explicit scene state and searches back to a later original-plan goal~\cite{namasivayam2024learning}; Reflective Planning predicts future images to reconsider actions; and behavior trees check conditions online and trigger recovery branches~\cite{feng2025reflective,colledanchise2016behavior,iovino2022survey}. These approaches correspond to our VeriGraph-PDDL, LERa-PDDL, and VLM-RP-BT baselines. The first two regenerate all remaining steps from the current state, while the third inserts VLM-selected recovery actions into a behavior tree.
+
+Other graphs retrieve task-relevant scene information, integrate online observations, or organize parallel manipulation steps~\cite{booker2024embodiedrag,shirasaka2025spark,yang2026integrated,zhang2026atomic}. They generally check current-plan feasibility or generate a post-failure path. They do not jointly record a condition's producer and consumers, recheck that condition after a disturbance, and replace only affected later steps. \method stores current visual facts and action dependencies in the same task graph, follows invalidated dependencies to affected steps, preserves valid branches, and verifies that the updated remainder reaches the goal from the current state.
+
+\begin{figure}[!b]
+  \centering
+  \includegraphics[width=0.94\columnwidth]{LOGIV_pre beautiful.pdf}
+  \caption{\method pre-execution planning and task-graph construction. The PDDL Operator Planner generates a reference plan $P$ composed of grounded high-level symbolic operators from the task description. After iterative VAL checks, the \method graph-construction algorithm builds the initial task graph $G$.}
+  \label{fig:preplan}
+\end{figure}
+
+\section{Method}
+\method is a closed-loop planning, verification, and local-repair framework that wraps an existing robot policy. The policy executes individual high-level actions, while \method generates and monitors the plan and repairs the remainder after an action failure or environmental change. This separation leaves low-level execution unchanged while making the high-level plan externally checkable and locally repairable. Sections~III-A to III-C present the problem, pre-execution planning, validation, graph construction, online checking, repair, and plan updates.
+
+\subsection{Problem Formulation}
+We study high-level plan repair for long-horizon manipulation. \method builds an initial task graph $G$ before execution and advances it online from low-level-policy feedback.
+
+At time $t$, $S_t$ is the latest reliable state derived from proprioception, actuator feedback, and VLM conclusions parsed from observation $O_t$. Given initial state $S_0$ and goal $g$, the Operator Planner in Equation~\eqref{eq:plan} generates the reference plan $P=(o_1,\ldots,o_n)$. Each $o_i$ is a grounded high-level PDDL operator whose preconditions and effects are used for VAL checking and graph construction~\cite{aeronautiques1998pddl,howey2004val}. Positions in $P$ define the reference order for compiling a directed acyclic task graph $G=(V,E)$. Here, $V$ contains action nodes and virtual \textsc{start} and \textsc{goal} nodes. In $E$, Causal edges encode precondition support and Resource edges constrain execution order. Together, these edges record which action supports each condition and which actions must remain ordered during execution.
+\begin{align}
+P&=\operatorname{PreparePlan}(S_0,g)=(o_1,\ldots,o_n), \nonumber\\
+G&=(V,E)=\operatorname{BuildGraph}(S_0,P,g).
+\label{eq:plan}
+\end{align}
+Task graph $G$ schedules execution by identifying ready nodes from their dependencies and completion states, with $P$ breaking ties. The selected operator is converted into a natural-language instruction and passed with the current observation to the low-level policy. During execution, \method updates reference plan $P$ and task graph $G$ online from observations and policy feedback, and records error $e_t$ on failure. Once the failure is confirmed, the repair routine in (2) uses $S_t$ and $e_t$ to trace Causal edges, locate affected unfinished nodes, retain other valid nodes, and generate operators that restore invalidated conditions. The new and retained operators form reference plan $P'$. After $P'$ passes VAL, \method rebuilds task graph $G'$ and selects a new ready node from it. If validation fails, \method either regenerates $\Delta P_t$ within the current scope, expands the affected scope to a failing retained node and its causal successors, or adds unsatisfied goal conditions to the local goal, according to the first failure condition.
+\begin{equation}
+(P',G')=\operatorname{TopologyGuidedRepair}(S_t,e_t,P,G).
+\end{equation}
+
+\begin{algorithm}[t]
+\algcaption{\method Task-Graph Execution and Topology-Guided Repair}
+\label{alg:logiv}
+\textbf{Require} initial task state $S_0$, task goal $g$\par
+\textbf{Output} \textsc{success} or \textsc{failure}\par\vspace{2pt}\hrule
+\begin{compactalgorithmic}
+\item $P\leftarrow\operatorname{PreparePlan}(S_0,g)$
+\item \textbf{if} $P=\textsc{fail}$ \textbf{then return} \textsc{failure}
+\item $G\leftarrow\operatorname{BuildGraph}(S_0,P,g)$
+\item $\texttt{state}\leftarrow S_0$
+\item \textbf{while} execution budget remains \textbf{do}
+\item \hspace*{1.5em}$v\leftarrow$ next ready node in $G$ or \textsc{goal}
+\item \hspace*{1.5em}$(\texttt{status},S_t,e_t)\leftarrow\operatorname{VerifyAndExecute}(v,G,\texttt{state})$
+\item \hspace*{1.5em}\textbf{if} $\texttt{status}=\textsc{unresolved}$ \textbf{then return} \textsc{failure}
+\item \hspace*{1.5em}\textbf{else if} $\texttt{status}=\textsc{pass}$ and $v=\textsc{goal}$ \textbf{then return} \textsc{success}
+\item \hspace*{1.5em}\textbf{else if} $\texttt{status}=\textsc{pass}$ \textbf{then}
+\item \hspace*{3em}set $v$ in $G$ to completed and set $\texttt{state}\leftarrow S_t$
+\item \hspace*{1.5em}\textbf{else} \quad \algcomment{confirmed \textsc{fail}}
+\item \hspace*{3em}$(P',G')\leftarrow\operatorname{TopologyGuidedRepair}(S_t,e_t,P,G)$
+\item \hspace*{3em}\textbf{if} $P'=\textsc{fail}$ \textbf{then return} \textsc{failure}
+\item \hspace*{3em}$(P,G,\texttt{state})\leftarrow(P',G',S_t)$ \quad \algcomment{install}
+\item \hspace*{1.5em}\textbf{end if}
+\item \textbf{end while}
+\item \textbf{return} \textsc{failure}
+\end{compactalgorithmic}
+\end{algorithm}
+
+\begin{figure*}[t]
+  \centering
+    \includegraphics[width=\textwidth]{Method beautiful version.pdf}
+  \caption{\method online verification and topology-guided local repair. Three Gates schedule and check execution. After a failure, \method locates the affected causal branch and validates a replacement segment before resuming. Natural-language action nodes correspond to grounded operators in $P$ or $\Delta P_t$.}
+  \label{fig:overview}
+\end{figure*}
+
+\subsection{Pre-Execution Planning}
+\textbf{Plan generation and validation.}
+To construct $P$, the Operator Planner takes the PDDL Domain and Problem shown in Figure~\ref{fig:preplan}(A). The Domain defines reusable operators, parameters, preconditions, and effects. The Problem specifies the objects, $S_0$, and $g$~\cite{aeronautiques1998pddl}. In Fig.~\ref{fig:preplan}(B), the planner binds operator schemas to objects and runs LAMA-first~\cite{richter2010lama} in Fast Downward~\cite{helmert2006fast}. Starting from $S_0$, it repeatedly selects an operator whose preconditions hold, applies its effects to the simulated symbolic state, and derives the next state. This continues until the state satisfies $g$, yielding an executable order $P=(o_1,\ldots,o_n)$. After constructing support and order edges, $P$ is a topological order of $G$.
+
+Figure~\ref{fig:preplan}(C) shows VAL independently replaying $P$ from $S_0$ under the planner's update rule. VAL checks the object bindings and preconditions of each $o_i$. If they pass, it applies the effects of $o_i$ and checks $o_{i+1}$ against the updated state. After replaying all operators, VAL checks whether the final state satisfies $g$~\cite{howey2004val}. On failure, VAL returns the first failing location and cause. The planner adjusts and replans until the complete plan $P$ passes validation, then graph construction begins.
+
+\textbf{Task-graph construction.}
+Figure~\ref{fig:preplan}(D) shows the validated plan $P$ compiled into a directed acyclic graph $G$, whose action and virtual nodes are connected by Causal edges and Resource edges. \method maps each operator to an action node and adds virtual \textsc{start} and \textsc{goal} nodes. For each condition in $S_0$, the compiler links \textsc{start} to the actions that require it. During execution, \method updates links from \textsc{start} to unexecuted nodes using $S_t$, so current conditions continue to support relevant actions. Action effects support later actions through Causal edges. The last valid action that establishes each goal condition links to \textsc{goal}. Execution completes only when every condition required by \textsc{goal} holds.
+
+For each precondition of $o_i$ in the validated reference plan $P=(o_1,\ldots,o_n)$, the compiler searches the prefix $(o_1,\ldots,o_{i-1})$ backward for the nearest operator $o_j$ that establishes the condition without that condition being revoked before $o_i$. It then adds a Causal edge $o_j\rightarrow o_i$. If the condition is supplied by $S_0$, \textsc{start} connects directly to $o_i$. The last valid source of each condition in $g$ similarly connects to \textsc{goal}. Resource edges encode execution order and constraints. Actions connect according to their relative positions in $P$ when they share arms or grippers that cannot operate in parallel, or when they write conflicting states. Finally, $(P,G,S_0)$ enters the online loop with $S_0$ supporting initial actions through \textsc{start}.
+
+\subsection{Online Verification and Recovery}
+\textbf{Task-graph scheduling and online checking.}
+Figure~\ref{fig:overview} shows \method scheduling high-level actions online over task graph $G$. The State Gate, Node Gate, and Graph Gate filter state information, verify node execution, and check graph-level dependencies, respectively. Execution starts at \textsc{start}. A node-selection module identifies ready nodes from completion states and graph dependencies; if several are ready, it chooses the one appearing earliest in reference plan $P$. The system then performs a pre-execution check, invokes the backbone, and performs a post-execution check. The three Gates therefore separate state reliability, current-action validity, and downstream dependency preservation before any repair decision. On error, the system records $e_t$, updates $G$, and triggers repair.
+
+Before execution, the VLM extracts from $O_t$ the task facts needed to check the current operator. The State Gate combines these facts with proprioception and actuator feedback, then admits only confirmed evidence into $S_t$. When visual evidence is insufficient, the robot may capture another image, change viewpoint, recheck the node through active perception, or request human help. Unsupported facts neither enter $S_t$ nor overwrite reliable facts. If uncertainty remains when the budget is exhausted, the system returns \textsc{unresolved} and stops.
+
+After updating $S_t$, the Graph Gate and Node Gate perform two pre-execution checks. The Graph Gate verifies that all predecessors are complete and their supporting conditions remain valid. The Node Gate checks the action preconditions against the current state. Either failure returns \textsc{fail}, records $e_t$, and triggers repair. If both pass, the operator is verbalized and sent to the low-level policy.
+
+After execution, the VLM parses the latest observation again, and the State Gate combines it with proprioception and actuator feedback to update $S_t$. The Node Gate checks the expected action effects, while the Graph Gate checks conditions required by the remaining plan. A missing effect or broken dependency returns \textsc{fail}, records $e_t$, and triggers repair. If both checks pass, the system returns \textsc{pass}, marks the current node complete in $G$, and advances. At \textsc{goal}, execution succeeds if $g$ holds. Otherwise, the system returns \textsc{fail}, records $e_t$, and triggers repair. Algorithm~\ref{alg:logiv} represents the pre-execution check, low-level execution, and post-execution check as
+\begin{equation*}
+\begin{aligned}
+(\texttt{status},S_t,e_t)&=\operatorname{VerifyAndExecute}(v,G,S), \\
+\texttt{status}&\in\{\textsc{pass},\textsc{fail},\textsc{unresolved}\}.
+\end{aligned}
+\end{equation*}
+Here, $v$ is the current node, and $S$ is the reliable state at entry. The procedure returns \texttt{status}, the updated state $S_t$, and a confirmed error $e_t$.
+
+\textbf{Repair scope and local replanning.}
+Repair determines the affected scope and replans the required actions. In Algorithm~\ref{alg:logiv}, $\operatorname{TopologyGuidedRepair}$ receives reliable state $S_t$ and error $e_t$. Error $e_t$ records the failure stage, corresponding node, and missing or invalidated conditions, which the Repair Gate uses to determine where causal tracing begins. A pre-execution check failure identifies missing preconditions, a post-execution check failure identifies missing or destroyed effects, and a \textsc{goal} failure identifies unsatisfied goal conditions. The Repair Gate follows Causal edges through affected successors to form the dependency chain requiring repair. Resource edges do not expand this causally affected scope; when the repair segment is reattached, they check resource conflicts and update execution order. Keeping these roles separate prevents resource constraints from unnecessarily enlarging the causally affected repair scope. Affected unfinished nodes are replanned, while other unfinished nodes retain their order and links.
+
+The selected repair scope must restore two types of conditions. The first type is required by retained downstream actions. The second type contains conditions in $g$ that remain unsatisfied and were originally established by affected nodes. Together, these conditions form the local planning goal $g_t^{\mathrm{loc}}$. If an effect produced by a completed node has become invalid but is still needed downstream, it is also added to $g_t^{\mathrm{loc}}$. Other valid unfinished operators are retained. Around the repair location, they form order-preserving subsequences $P_{\mathrm{keep}}^{-}$ and $P_{\mathrm{keep}}^{+}$. VAL replays $P_{\mathrm{keep}}^{-}$ from the current reliable state $S_t$ to obtain the repair-location state $\bar S_t$. Starting from $\bar S_t$, the Operator Planner generates a local symbolic-operator segment $\Delta P_t$ that satisfies $g_t^{\mathrm{loc}}$. Inserting this segment between the retained subsequences produces candidate plan $P'$:
+\begin{equation}
+P'=P_{\mathrm{keep}}^{-}\oplus\Delta P_t\oplus P_{\mathrm{keep}}^{+}.
+\end{equation}
+
+Starting from $S_t$, VAL checks whether the complete candidate plan $P'$ executes in sequence and reaches $g$. A failure inside $\Delta P_t$ regenerates the local segment within the same scope. If the first failure occurs at retained node $v$, the segment has not restored conditions required by $v$, so the next round replans $v$ and its causal successors. If all operators execute but $g$ remains unsatisfied, the missing goal conditions enter $g_t^{\mathrm{loc}}$ and the segment is regenerated. This continues until $P'$ passes validation or the repair budget is exhausted, in which case $\operatorname{TopologyGuidedRepair}$ returns \textsc{fail}.
+
+After validation, \method compiles repaired plan $P'$ into $G'$. The \textsc{start} node connects to conditions already true in $S_t$. Retained nodes preserve their relative order and dependencies, while new operators attach according to their positions in $P'$. The system updates resource order and links goal conditions to \textsc{goal}. After installing $G'$, scheduling resumes at the earliest node whose dependencies hold under $S_t$. Completed steps with valid effects are skipped, and execution returns to online checking.
+
+\section{Experiments}
+\subsection{Experiment Setup}
+\textbf{Tasks.}
+We evaluate \method on ten tasks each from the RoboTwin~V2~\cite{chen2025robotwin} and BiCoord dual-arm simulators. Both natively support high-dimensional actions and coordinated dual-arm control, with multistage, cross-arm-dependent tasks suited to long-horizon verification and recovery. Table~\ref{tab:tasks} lists all 20 tasks.
+\begin{table}[!t]
+\centering
+\caption{The 20 dual-arm tasks from RoboTwin~V2 and BiCoord.}
+\label{tab:tasks}
+\small
+\renewcommand{\arraystretch}{1.05}
+\setlength{\tabcolsep}{2pt}
+\begin{tabular*}{\columnwidth}{@{\extracolsep{\fill}}ll@{}}
+\toprule
+\multicolumn{2}{c}{RoboTwin~V2} \\
+\cmidrule(lr){1-2}
+\texttt{beat\_block\_hammer} & \texttt{blocks\_ranking\_size} \\
+\texttt{handover\_block} & \texttt{move\_can\_pot} \\
+\texttt{open\_microwave} & \texttt{place\_dual\_shoes} \\
+\texttt{stack\_blocks\_three} & \texttt{stack\_bowls\_three} \\
+\texttt{stamp\_seal} & \texttt{turn\_switch} \\
+\midrule
+\multicolumn{2}{c}{BiCoord} \\
+\cmidrule(lr){1-2}
+\texttt{cook} & \texttt{put\_objects\_cabinet} \\
+\texttt{divide\_block\_tower} & \texttt{place\_plate\_and\_cup} \\
+\texttt{build\_bridge} & \texttt{clean\_table} \\
+\texttt{collect\_pens} & \texttt{match\_blocks\_with\_signs} \\
+\texttt{jigsaw} & \texttt{exchange\_mics} \\
+\bottomrule
+\end{tabular*}
+\end{table}
+
+Each task has ten predefined initial states. Clean runs each state once without manual disturbance. Perturbed reuses the same states and injects one recoverable disturbance at a predefined event. The disturbance type and trigger are fixed within a task but differ according to task goals and object relations. In \texttt{move\_can\_pot}, the pot shifts laterally by 10 to 15\,cm after the can is grasped and lifted. In \texttt{blocks\_ranking\_size}, one of the first two blocks moves to a wrong region after both placements. In \texttt{place\_dual\_shoes}, the right shoe moves outside the target after both placements.
+
+\textbf{Backbones and baselines.}
+We use $\pi_{0.5}$, AHA-WAM, and Light-WAM as backbones. The $\pi_{0.5}$ backbone is a VLA execution policy~\cite{black2024backslash}, while AHA-WAM and Light-WAM are based on world-action modeling~\cite{cai2026aha,li2026light}. Their differing baseline performance tests whether a high-level corrective method depends on a particular low-level model. On RoboTwin~V2, \method neither modifies nor retrains these backbones; it adds only external planning, checking, and repair. For BiCoord, task-specific fine-tuning was performed for the ten tasks because no task-fine-tuned weights were available. This backbone adaptation is separate from \method, which remains training-free.
+
+For each backbone, we compare five configurations. \emph{Backbone} follows the task instruction directly without explicit high-level correction. \emph{VeriGraph-PDDL} retains the core idea of checking scene-graph constraints~\cite{ekpo2024verigraph} and replans the complete remaining task from reliable state $S_t$ when a constraint is violated. \emph{LERa-PDDL} uses visual feedback to analyze the failure cause, updates the planning conditions, and replans the complete remaining task from $S_t$~\cite{pchelintsev2025lera}. \emph{VLM-RP-BT} organizes the same initial plan as a behavior tree, generating and inserting recovery actions when a condition is unsatisfied~\cite{feng2025reflective,colledanchise2016behavior,iovino2022survey}. All configurations use a common planning and execution interface, which allows a controlled comparison of these distinct online-correction paradigms with \method.
+
+\textbf{Implementation details.}
+Vision-language configurations use GPT-4o~\cite{hurst2024gpt} with at most 512 output tokens. Each node receives one pre-execution check and one post-execution check; \textsc{unresolved} permits at most three extra observations. Fast Downward uses LAMA-first with 30\,s per planning call and 5\,s per VAL validation. For each failure, the budget permits three local-repair rounds and four VLM calls; exceeding either ends the episode. Each $\text{Backbone}\times\text{Method}$ configuration runs 400 episodes with identical inputs, disturbances, success criteria, and computational budgets.
+
+\textbf{Evaluation metrics.}
+Five metrics evaluate execution and repair. Clean SR is the share of episodes completed without manual disturbance and tests effects on normal execution. Perturbed SR is the share completed after a predefined disturbance and measures end-to-end robustness. Recovery SR is the share of valid recoverable disturbances recovered. Valid events reach the injection point, lose the designated condition, and remain recoverable with the existing action set; recovery re-establishes that condition within budget and passes the next relevant check.
+
+Repair Scope divides deleted, replaced, or replanned nodes by nodes unexecuted at repair onset. Re-exec. counts valid completed actions repeated after repair only when their effect still holds in $S_t$ and type and parameters are unchanged. Lower is better for both.
+
+\subsection{Detailed Results}
+\begin{table}[!t]
+\centering
+\caption{Overall performance across backbones and online corrective methods. C/P/R denote Clean, Perturbed, and Recovery SR (\%).}
+\label{tab:main}
+\small
+\renewcommand{\arraystretch}{1.00}
+\setlength{\tabcolsep}{3.2pt}
+\begin{tabular*}{\columnwidth}{@{\extracolsep{\fill}}llccc@{}}
+\toprule
+Backbone & Method & C $\uparrow$ & P $\uparrow$ & R $\uparrow$ \\
+\midrule
+\multicolumn{5}{c}{RoboTwin~V2} \\
+\cmidrule(lr){1-5}
+\multirow{5}{*}{$\pi_{0.5}$} & Backbone & 56 & 32 & 18 \\
+& VeriGraph-PDDL & 68 & 56 & 66 \\
+& LERa-PDDL & 67 & 57 & 64 \\
+& VLM-RP-BT & 63 & 58 & 68 \\
+& \method & \textbf{72} & \textbf{60} & \textbf{72} \\
+\cmidrule(lr){1-5}
+\multirow{5}{*}{AHA-WAM} & Backbone & 85 & 60 & 35 \\
+& VeriGraph-PDDL & 90 & 78 & 81 \\
+& LERa-PDDL & 88 & 79 & 82 \\
+& VLM-RP-BT & 91 & 80 & 80 \\
+& \method & \textbf{93} & \textbf{83} & \textbf{85} \\
+\cmidrule(lr){1-5}
+\multirow{5}{*}{Light-WAM} & Backbone & 74 & 58 & 28 \\
+& VeriGraph-PDDL & 76 & 68 & 65 \\
+& LERa-PDDL & 76 & 67 & 70 \\
+& VLM-RP-BT & 78 & 70 & 62 \\
+& \method & \textbf{82} & \textbf{72} & \textbf{79} \\
+\midrule
+\multicolumn{5}{c}{BiCoord} \\
+\cmidrule(lr){1-5}
+\multirow{5}{*}{$\pi_{0.5}$} & Backbone & 39 & 31 & 21 \\
+& VeriGraph-PDDL & 46 & 39 & 56 \\
+& LERa-PDDL & 47 & 43 & 63 \\
+& VLM-RP-BT & 45 & 45 & 59 \\
+& \method & \textbf{50} & \textbf{48} & \textbf{68} \\
+\cmidrule(lr){1-5}
+\multirow{5}{*}{AHA-WAM} & Backbone & 45 & 43 & 37 \\
+& VeriGraph-PDDL & 56 & 46 & 77 \\
+& LERa-PDDL & 52 & 48 & 73 \\
+& VLM-RP-BT & 57 & 48 & 80 \\
+& \method & \textbf{62} & \textbf{53} & \textbf{84} \\
+\cmidrule(lr){1-5}
+\multirow{5}{*}{Light-WAM} & Backbone & 43 & 39 & 31 \\
+& VeriGraph-PDDL & 56 & 46 & 67 \\
+& LERa-PDDL & 51 & 45 & 65 \\
+& VLM-RP-BT & 58 & 43 & 68 \\
+& \method & \textbf{61} & \textbf{49} & \textbf{74} \\
+\bottomrule
+\end{tabular*}
+\end{table}
+
+Across the 18 combinations of benchmark, backbone, and success metric in Table~\ref{tab:main}, \method performs best and leads the strongest corrective baseline by 2 to 9 points. Mean Clean SR rises from 71.67\% to 82.33\% on RoboTwin~V2 and from 42.33\% to 57.67\% on BiCoord. The gains occur for both VLA and WAM backbones.
+
+Relative to raw backbones, \method raises Clean SR by 8 to 16 points and Perturbed SR by 14 to 28 points on RoboTwin~V2. On BiCoord, the corresponding gains are 11 to 18 and 10 to 17 points. The Clean SR gains show that the three Gates handle natural state deviations and action failures, while the Perturbed SR gains show recovery from external disturbances. These gains persist on BiCoord's longer, more densely coupled dual-arm tasks.
+
+All three corrective baselines generally beat the raw backbone, which shows that visual feedback and online replanning improve long-horizon execution. \method raises Recovery SR over the strongest baseline by another 3 to 9 points in all six benchmark and backbone settings. This result matches the intended roles of causal Repair Scope, valid-node preservation, and complete subsequent-plan validation. The ablations examine these mechanisms separately.
+
+Recovery SR exceeds Perturbed SR in all six settings because it succeeds once the invalidated condition is restored and the next relevant check passes, whereas Perturbed SR requires episode completion. Thus a later low-level failure after successful local recovery affects only Perturbed SR: Recovery SR measures plan repair, while Perturbed SR includes subsequent execution errors.
+
+\subsection{Ablation Study}
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\columnwidth]{ablation_bar_chart.pdf}
+  \caption{System-level ablations of \method on RoboTwin~V2 using $\pi_{0.5}$~\cite{black2024backslash}. Labels after Full denote removal of the State Gate, \textsc{unresolved} handling, Node Gate, Graph Gate, Causal-edge tracing, Local Repair, and VAL verification. Higher is better for SR; lower is better otherwise.}
+  \label{fig:ablation}
+\end{figure}
+
+To trace each ablation to the recovery pipeline, we organize the study as error discovery, Repair Scope selection, and repair validation. We first test whether the State, Node, and Graph Gates provide reliable evidence at the state, current-action, and dependency levels. We then remove Causal-edge tracing or Local Repair to test whether the system can identify and modify only affected nodes. Finally, we remove VAL before installing the repaired graph to test complete-plan validation. As shown in Fig.~\ref{fig:ablation}, all variants are evaluated on RoboTwin~V2 using $\pi_{0.5}$ with identical visual inputs, VLM, and planning budget.
+
+\textbf{State Gate, Node Gate, and Graph Gate.}
+Without the State Gate, unfiltered visual facts enter $S_t$, making later checks and repairs unreliable. Without \textsc{unresolved}, insufficient evidence is forced true or false and can update $S_t$ incorrectly. Without the Node Gate, unchecked preconditions and effects can cause an inapplicable action or mark a failed node complete. Without the Graph Gate, completed-node supports are not checked continuously, hiding an invalid early condition until a later failure. Thus the State, Node, and Graph Gates preserve state reliability, current-node validity, and graph dependencies, jointly detecting errors and locating the repair start.
+
+\textbf{Causal edge and Local Repair.}
+The ``w/o Causal-edge tracing in Repair Gate'' variant selects by position in $P$, not Causal edges in task graph $G$. Its Clean SR drops from 72\% to 61\%, the largest ablation loss, so plan position cannot replace Causal dependencies. Without Local Repair, all remaining actions are replanned from $S_t$ and valid nodes may repeat. Causal edges accurately locate affected nodes; Local Repair preserves other valid nodes; together they reduce unrelated changes and re-execution.
+
+\textbf{VAL Verification.}
+Without VAL Verification of complete $P'$ before rebuilding $G'$, a locally executable segment may leave a retained precondition unsatisfied or \textsc{goal} unreachable after reattachment. VAL ensures reconnection and task completion.
+
+The ablation experiment shows that the three components—gate checking, search and local repair based on causal edges, and VAL verification—respectively handle error detection, identification and repair of affected nodes, and validation of the repaired complete plan. Together, they form LOGIV's closed-loop recovery process; the absence of any component would weaken both task execution and failure recovery capabilities.
+
+\subsection{Real-World Experiments}
+
+
+\section{Conclusion}
+We study how to redo only the actions affected when an early condition becomes invalid, while preserving valid results. \method builds a topological task graph before execution, maintains it online, checks inter-action condition support, traces affected nodes, and updates only the local plan. Experiments on RoboTwin~V2 and BiCoord show better completion and disturbance recovery across VLA/WAM backbones; a real-robot evaluation is also conducted. The simulation results show that an external, checkable, updatable plan structure can handle execution errors and environmental changes without retraining, rather than relying only on larger end-to-end models. Future work will address changing goals and incomplete states in open environments and extend \method to multi-robot collaboration.
+
+\FloatBarrier
+\balance
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+\end{document}
